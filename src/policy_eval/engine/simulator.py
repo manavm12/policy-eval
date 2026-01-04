@@ -21,46 +21,35 @@ class RunResult:
     trajectory: Trajectory
 
 
-def simulate(
-    domain: Domain,
-    policy: Policy,
-    cfg: RunConfig,
-    seed: int,
-) -> RunResult:
-    rng = RNG(seed).generator()
+def simulate(domain: Domain, policy: Policy, cfg: RunConfig, seed: int) -> RunResult:
+    base = RNG(seed)
 
-    state: Any = domain.initial_state(rng)
+    state: Any = domain.initial_state(base.fork("init"))
     events = []
 
     for t in range(cfg.horizon):
-        # 1. Policy acts (system-level rules)
+        # Policy (no rng needed right now)
         ctx = domain.policy_context(state, t)
         policy_action = policy.decide(ctx)
 
-        # 2. Actors act (behavior)
+        # Actors get their own deterministic streams
         actor_actions = []
         for actor in domain.actors(state):
             obs = domain.observe(state, actor, t)
-            action = actor.act(obs, rng)
-            actor_actions.append(action)
+            actor_rng = base.fork("actor", actor.id, t)
+            actor_actions.append(actor.act(obs, actor_rng))
 
-        # 3. World transitions
+        # Domain transition gets its own stream
+        trans_rng = base.fork("transition", t)
         state = domain.transition(
             state=state,
             policy_action=policy_action,
             actor_actions=actor_actions,
-            rng=rng,
+            rng=trans_rng,
             t=t,
         )
 
-        # 4. Record what happened
         events.append(domain.record(state, t))
 
     traj = domain.finalize(events, state)
-
-    return RunResult(
-        domain=domain.name,
-        policy=policy.name,
-        seed=seed,
-        trajectory=traj,
-    )
+    return RunResult(domain=domain.name, policy=policy.name, seed=seed, trajectory=traj)
