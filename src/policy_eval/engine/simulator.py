@@ -27,22 +27,35 @@ def simulate(
     cfg: RunConfig,
     seed: int,
 ) -> RunResult:
-    """
-    Run one simulation with a fixed domain, policy, and seed.
-    """
     rng = RNG(seed).generator()
 
-    # 1. Initialize world
     state: Any = domain.initial_state(rng)
     events = []
 
-    # 2. Run time forward
     for t in range(cfg.horizon):
-        # Domain advances the world
-        state, event = domain.step(state, rng, t)
-        events.append(event)
+        # 1. Policy acts (system-level rules)
+        ctx = domain.policy_context(state, t)
+        policy_action = policy.decide(ctx)
 
-    # 3. Finalize trajectory
+        # 2. Actors act (behavior)
+        actor_actions = []
+        for actor in domain.actors(state):
+            obs = domain.observe(state, actor, t)
+            action = actor.act(obs, rng)
+            actor_actions.append(action)
+
+        # 3. World transitions
+        state = domain.transition(
+            state=state,
+            policy_action=policy_action,
+            actor_actions=actor_actions,
+            rng=rng,
+            t=t,
+        )
+
+        # 4. Record what happened
+        events.append(domain.record(state, t))
+
     traj = domain.finalize(events, state)
 
     return RunResult(
